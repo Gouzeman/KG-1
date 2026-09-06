@@ -7,6 +7,10 @@
 x64/
 x86/
 
+# NuGet packages
+packages/
+*.nupkg
+
 # User-specific files
 *.user
 *.suo
