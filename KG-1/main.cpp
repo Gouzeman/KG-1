@@ -55,6 +55,9 @@ struct PrimitiveSet
 // Все созданные наборы.
 vector<PrimitiveSet> Sets;
 
+// Индекс активного набора.
+size_t ActiveSetIndex = 0;
+
 
 // Команды контекстного меню.
 enum MenuCommand
@@ -68,23 +71,38 @@ enum MenuCommand
     MENU_MOVE_LEFT,
     MENU_MOVE_RIGHT,
 
+    MENU_PREVIOUS_SET,
+    MENU_NEXT_SET,
     MENU_NEW_SET,
     MENU_DELETE_PRIMITIVE,
     MENU_DELETE_SET
 };
 
 
-// Создаёт пустой набор при необходимости.
+// Создаёт пустой набор при необходимости
 void EnsureCurrentSet()
 {
     if (Sets.empty())
     {
         Sets.push_back(PrimitiveSet());
+        ActiveSetIndex = 0;
+    }
+    else if (ActiveSetIndex >= Sets.size())
+    {
+        ActiveSetIndex = Sets.size() - 1;
     }
 }
 
 
-// Проверяет наличие вершин в наборе.
+// Возвращает активный набор
+PrimitiveSet& GetCurrentSet()
+{
+    EnsureCurrentSet();
+    return Sets[ActiveSetIndex];
+}
+
+
+// Проверяет наличие вершин в наборе
 bool HasVertices(const PrimitiveSet& set)
 {
     for (size_t i = 0; i < set.primitives.size(); i++)
@@ -99,26 +117,28 @@ bool HasVertices(const PrimitiveSet& set)
 }
 
 
-// Добавляет вершину в текущий примитив.
+// Добавляет вершину в текущий примитив
 void AddVertex(GLint x, GLint y)
 {
+    // проверка на пустой наборр
     EnsureCurrentSet();
 
-    PrimitiveSet& currentSet = Sets.back();
+    // получаем активный набор
+    PrimitiveSet& currentSet = GetCurrentSet();
 
-    // Создаёт новый треугольник.
+    // если в наборе нет примитивов или есть три вершины, то создаём новый треугольник
     if (currentSet.primitives.empty() ||
         currentSet.primitives.back().vertices.size() == 3)
     {
         currentSet.primitives.push_back(Primitive());
     }
 
-    // Добавляет вершину.
+    // Добавляет вершину в последний примитив
     currentSet.primitives.back().vertices.push_back(Point(x, y));
 }
 
 
-// Удаляет незавершённый примитив.
+// Удаляет незавершённый примитив
 void RemoveIncompletePrimitive()
 {
     if (Sets.empty())
@@ -126,7 +146,7 @@ void RemoveIncompletePrimitive()
         return;
     }
 
-    PrimitiveSet& currentSet = Sets.back();
+    PrimitiveSet& currentSet = GetCurrentSet();
 
     if (currentSet.primitives.empty())
     {
@@ -142,30 +162,31 @@ void RemoveIncompletePrimitive()
 }
 
 
-// Начинает новый набор примитивов.
+// Начинает новый набор примитивов
 void StartNewSet()
 {
     EnsureCurrentSet();
 
-    // Незавершённый треугольник не сохраняется.
+    // Незавершённый треугольник не сохраняется
     RemoveIncompletePrimitive();
 
-    // Пустой набор не завершается.
-    if (!HasVertices(Sets.back()))
+    // Пустой набор не завершается
+    if (!HasVertices(GetCurrentSet()))
     {
         return;
     }
 
     Sets.push_back(PrimitiveSet());
+    ActiveSetIndex = Sets.size() - 1;
 }
 
 
-// Изменяет цвет текущего набора.
+// Изменяет цвет текущего набора
 void SetCurrentColor(GLubyte r, GLubyte g, GLubyte b)
 {
     EnsureCurrentSet();
 
-    PrimitiveSet& currentSet = Sets.back();
+    PrimitiveSet& currentSet = GetCurrentSet();
 
     currentSet.colorR = r;
     currentSet.colorG = g;
@@ -173,19 +194,19 @@ void SetCurrentColor(GLubyte r, GLubyte g, GLubyte b)
 }
 
 
-// Перемещает текущий набор.
+// Перемещает текущий набор
 void MoveCurrentSet(GLint dx, GLint dy)
 {
     EnsureCurrentSet();
 
-    PrimitiveSet& currentSet = Sets.back();
+    PrimitiveSet& currentSet = GetCurrentSet();
 
-    // Обходит примитивы.
+    // Обходит примитивы
     for (size_t i = 0; i < currentSet.primitives.size(); i++)
     {
         Primitive& primitive = currentSet.primitives[i];
 
-        // Обходит вершины примитива.
+        // Обходит вершины примитива
         for (size_t j = 0; j < primitive.vertices.size(); j++)
         {
             primitive.vertices[j].x += dx;
@@ -195,7 +216,7 @@ void MoveCurrentSet(GLint dx, GLint dy)
 }
 
 
-// Удаляет последний примитив.
+// Удаляет последний примитив
 void DeleteLastPrimitive()
 {
     if (Sets.empty())
@@ -203,7 +224,7 @@ void DeleteLastPrimitive()
         return;
     }
 
-    PrimitiveSet& currentSet = Sets.back();
+    PrimitiveSet& currentSet = GetCurrentSet();
 
     if (!currentSet.primitives.empty())
     {
@@ -212,7 +233,7 @@ void DeleteLastPrimitive()
 }
 
 
-// Удаляет последний набор.
+// Удаляет последний набор
 void DeleteLastSet()
 {
     if (!Sets.empty())
@@ -220,37 +241,62 @@ void DeleteLastSet()
         Sets.pop_back();
     }
 
-    // Оставляет пустой активный набор.
+    // Оставляет пустой активный набор
     EnsureCurrentSet();
 }
 
 
-// Отрисовывает содержимое окна.
+// Выбираем предыдущий набор
+void SelectPreviousSet()
+{
+    EnsureCurrentSet();
+
+    if (ActiveSetIndex == 0)
+    {
+        ActiveSetIndex = Sets.size() - 1;
+    }
+    else
+    {
+        ActiveSetIndex--;
+    }
+}
+
+
+// Выбирает следующий набор
+void SelectNextSet()
+{
+    EnsureCurrentSet();
+    ActiveSetIndex = (ActiveSetIndex + 1) % Sets.size();
+}
+
+
+// Отрисовывает содержимое окна
 void Display()
 {
-    // Очищает буфер кадра.
+    // Очищает буфер кадра
     glClearColor(0.15f, 0.15f, 0.15f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    // Включает сглаживание точек.
+    // Включает сглаживание точек
     glEnable(GL_POINT_SMOOTH);
 
-    // Обходит все наборы.
+    // Обходит все наборы
     for (size_t i = 0; i < Sets.size(); i++)
     {
         PrimitiveSet& set = Sets[i];
 
-        // Устанавливает цвет набора.
+        // Устанавливает цвет набора
         glColor3ub(set.colorR, set.colorG, set.colorB);
 
-        // Отрисовывает готовые треугольники.
+        // Отрисовывает готовые треугольники
         glBegin(GL_TRIANGLES);
 
+        // проходим по каждому трегольнику набора
         for (size_t j = 0; j < set.primitives.size(); j++)
         {
             Primitive& primitive = set.primitives[j];
 
-            // Для треугольника нужны три вершины.
+            // если вершин меньше 3 - пропускаем
             if (primitive.vertices.size() != 3)
             {
                 continue;
@@ -267,8 +313,8 @@ void Display()
 
         glEnd();
 
-        // Выделяет активный набор.
-        if (i == Sets.size() - 1)
+        // Выделяем активный набор
+        if (i == ActiveSetIndex)
         {
             glPointSize(ACTIVE_POINT_SIZE);
         }
@@ -277,7 +323,7 @@ void Display()
             glPointSize(POINT_SIZE);
         }
 
-        // Отрисовывает вершины набора.
+        // Отрисовываем вершины набора
         glBegin(GL_POINTS);
 
         for (size_t j = 0; j < set.primitives.size(); j++)
@@ -296,37 +342,37 @@ void Display()
         glEnd();
     }
 
-    // Завершает выполнение команд OpenGL.
+	// Блокируем выполнение программы пока все команды не будут выполнены
     glFlush();
 }
 
 
-// Обрабатывает изменение размеров окна.
+// Обрабатываем изменение размеров окна
 void Reshape(GLint w, GLint h)
 {
     Width = w;
     Height = h;
 
-    // Устанавливает область вывода.
+    // Устанавливает область вывода
     glViewport(0, 0, w, h);
 
-    // Настраивает систему координат.
+    // Настраивает систему координат
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     gluOrtho2D(0, w, 0, h);
 
-    // Возвращает матрицу модели.
+    // Возвращает матрицу модели
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 }
 
 
-// Обрабатывает нажатия клавиатуры.
+// Обрабатываем нажатия клавиатуры
 void Keyboard(unsigned char key, int x, int y)
 {
     switch (key)
     {
-        // Цвет текущего набора.
+        // Цвет текущего набора
     case 'r':
     case 'R':
     case '1':
@@ -372,7 +418,7 @@ void Keyboard(unsigned char key, int x, int y)
         break;
 
         // Удаление последнего примитива.
-    case 8:
+    case '\b':
         DeleteLastPrimitive();
         break;
 
@@ -383,7 +429,7 @@ void Keyboard(unsigned char key, int x, int y)
         break;
     }
 
-    // Запрашивает перерисовку окна.
+    // Запрашивает перерисовку окна
     glutPostRedisplay();
 }
 
@@ -409,12 +455,20 @@ void SpecialKeyboard(int key, int x, int y)
         MoveCurrentSet(MOVE_STEP, 0);
         break;
 
+    case GLUT_KEY_PAGE_UP:
+        SelectPreviousSet();
+        break;
+
+    case GLUT_KEY_PAGE_DOWN:
+        SelectNextSet();
+        break;
+
     case GLUT_KEY_DELETE:
         DeleteLastSet();
         break;
     }
 
-    // Запрашиваем перерисовку окна.
+    // Запрашиваем перерисовку окна
     glutPostRedisplay();
 }
 
@@ -433,7 +487,7 @@ void Mouse(int button, int state, int x, int y)
     {
         AddVertex(x, Height - y);
 
-        // Запрашивает перерисовку окна.
+        // Запрашивает перерисовку окна
         glutPostRedisplay();
     }
 }
@@ -472,6 +526,14 @@ void Menu(int command)
         MoveCurrentSet(MOVE_STEP, 0);
         break;
 
+    case MENU_PREVIOUS_SET:
+        SelectPreviousSet();
+        break;
+
+    case MENU_NEXT_SET:
+        SelectNextSet();
+        break;
+
     case MENU_NEW_SET:
         StartNewSet();
         break;
@@ -485,7 +547,7 @@ void Menu(int command)
         break;
     }
 
-    // Запрашивает перерисовку окна.
+    // Запрашивает перерисовку окна
     glutPostRedisplay();
 }
 
@@ -493,14 +555,14 @@ void Menu(int command)
 // Создаёт контекстное меню.
 void CreateContextMenu()
 {
-    // Подменю выбора цвета.
+    // Подменю выбора цвета
     int colorMenu = glutCreateMenu(Menu);
 
     glutAddMenuEntry("Red (R / 1)", MENU_COLOR_RED);
     glutAddMenuEntry("Green (G / 2)", MENU_COLOR_GREEN);
     glutAddMenuEntry("Blue (B / 3)", MENU_COLOR_BLUE);
 
-    // Подменю перемещения.
+    // Подменю перемещения
     int moveMenu = glutCreateMenu(Menu);
 
     glutAddMenuEntry("Up (Arrow Up / W)", MENU_MOVE_UP);
@@ -508,34 +570,28 @@ void CreateContextMenu()
     glutAddMenuEntry("Left (Arrow Left / A)", MENU_MOVE_LEFT);
     glutAddMenuEntry("Right (Arrow Right / D)", MENU_MOVE_RIGHT);
 
-    // Основное меню.
+    // Основное меню
     glutCreateMenu(Menu);
 
     glutAddSubMenu("Color", colorMenu);
     glutAddSubMenu("Move", moveMenu);
 
+    glutAddMenuEntry("Previous set (Page Up)", MENU_PREVIOUS_SET);
+    glutAddMenuEntry("Next set (Page Down)", MENU_NEXT_SET);
     glutAddMenuEntry("New set (Space)", MENU_NEW_SET);
-    glutAddMenuEntry(
-        "Delete last primitive (Backspace)",
-        MENU_DELETE_PRIMITIVE
-    );
-    glutAddMenuEntry(
-        "Delete last set (Delete / X)",
-        MENU_DELETE_SET
-    );
+    glutAddMenuEntry("Delete last primitive (Backspace)", MENU_DELETE_PRIMITIVE);
+    glutAddMenuEntry("Delete last set (Delete / X)", MENU_DELETE_SET);
 
-    // Назначает меню на правую кнопку мыши.
+    // открываем меню на ПКМ
     glutAttachMenu(GLUT_RIGHT_BUTTON);
 }
 
-
-// Главная функция программы.
 int main(int argc, char** argv)
 {
-    // Создаёт первый набор.
+    // Создаём первый набор
     Sets.push_back(PrimitiveSet());
 
-    // Инициализирует GLUT.
+    // Инициализируем GLUT
     glutInit(&argc, argv);
 
     // Настраивает буфер кадра.
@@ -547,9 +603,15 @@ int main(int argc, char** argv)
     // Создаёт окно.
     glutCreateWindow("Computer Graphics - Lab 1");
 
-    // Регистрирует callback-функции.
+    // Регистрируем callback-функции
+
+	// при перерисовке окна вызываем Display
     glutDisplayFunc(Display);
+
+    // при изменении размера окна вызываем Reshape
     glutReshapeFunc(Reshape);
+
+	// при нажатии мыши вызываем Mouse, при нажатии клавы, вызываем соответствующие функции
     glutKeyboardFunc(Keyboard);
     glutSpecialFunc(SpecialKeyboard);
     glutMouseFunc(Mouse);
