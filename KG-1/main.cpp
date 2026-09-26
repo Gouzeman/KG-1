@@ -31,13 +31,12 @@ struct Point
     GLint initialX;
     GLint initialY;
 
-    Point(GLint _x, GLint _y)
-    {
-        x = _x;
-        y = _y;
-        initialX = _x;
-        initialY = _y;
-    }
+    Point(GLint _x, GLint _y) :
+        x(_x),
+        y(_y),
+        initialX(_x),
+        initialY(_y)
+    {}
 };
 
 
@@ -56,13 +55,12 @@ struct Primitive
         GLubyte _colorG = 160,
         GLubyte _colorB = 255,
         GLint _zOrder = 0
-    )
-    {
-        colorR = _colorR;
-        colorG = _colorG;
-        colorB = _colorB;
-        zOrder = _zOrder;
-    }
+    ) :
+        colorR(_colorR),
+        colorG(_colorG),
+        colorB(_colorB),
+        zOrder(_zOrder)
+    {}
 };
 
 
@@ -92,6 +90,22 @@ enum InteractionMode
 };
 
 InteractionMode CurrentMode = DRAW_MODE;
+
+// Направление выбора объекта
+enum SelectDirection
+{
+    PREVIOUS = -1,
+    NEXT = 1
+};
+
+// Способ изменения порядка слоя
+enum LayerCommand
+{
+    LAYER_FORWARD,
+    LAYER_BACKWARD,
+    LAYER_TO_FRONT,
+    LAYER_TO_BACK
+};
 
 // Выбранный примитив активного набора
 size_t ActivePrimitiveIndex = 0;
@@ -206,34 +220,20 @@ void EnsureActivePrimitive()
 }
 
 
-// Выбирает предыдущий примитив активного набора
-void SelectPreviousPrimitive()
+// Сбрасывает выбор и выбирает доступный примитив в режиме редактирования
+void ResetPrimitiveSelection()
 {
-    if (CurrentMode != EDIT_MODE)
-    {
-        return;
-    }
+    ClearActivePrimitive();
 
-    EnsureActivePrimitive();
-
-    if (!HasActivePrimitive)
+    if (CurrentMode == EDIT_MODE)
     {
-        return;
-    }
-
-    if (ActivePrimitiveIndex == 0)
-    {
-        ActivePrimitiveIndex = GetCompletedPrimitiveCount(GetCurrentSet()) - 1;
-    }
-    else
-    {
-        ActivePrimitiveIndex--;
+        EnsureActivePrimitive();
     }
 }
 
 
-// Выбирает следующий примитив активного набора
-void SelectNextPrimitive()
+// Выбирает соседний примитив активного набора
+void SelectPrimitive(SelectDirection direction)
 {
     if (CurrentMode != EDIT_MODE)
     {
@@ -248,24 +248,30 @@ void SelectNextPrimitive()
     }
 
     size_t primitiveCount = GetCompletedPrimitiveCount(GetCurrentSet());
-    ActivePrimitiveIndex = (ActivePrimitiveIndex + 1) % primitiveCount;
+
+    if (direction == PREVIOUS)
+    {
+        if (ActivePrimitiveIndex == 0)
+        {
+            ActivePrimitiveIndex = primitiveCount - 1;
+        }
+        else
+        {
+            ActivePrimitiveIndex--;
+        }
+    }
+    else
+    {
+        ActivePrimitiveIndex = (ActivePrimitiveIndex + 1) % primitiveCount;
+    }
 }
 
 
 // Переключает режим рисования и редактирования
 void ToggleInteractionMode()
 {
-    if (CurrentMode == DRAW_MODE)
-    {
-        CurrentMode = EDIT_MODE;
-        ClearActivePrimitive();
-        EnsureActivePrimitive();
-    }
-    else
-    {
-        CurrentMode = DRAW_MODE;
-        ClearActivePrimitive();
-    }
+    CurrentMode = CurrentMode == DRAW_MODE ? EDIT_MODE : DRAW_MODE;
+    ResetPrimitiveSelection();
 
     AttachContextMenu();
 }
@@ -310,20 +316,69 @@ vector<size_t> GetSetDrawOrder()
 }
 
 
-// Возвращает положение активного набора среди слоёв
-size_t GetActiveLayerPosition()
+// Находит положение объекта в вычисленном порядке слоёв
+size_t FindLayerPosition(const vector<size_t>& order, size_t objectIndex)
 {
-    vector<size_t> order = GetSetDrawOrder();
-
     for (size_t i = 0; i < order.size(); i++)
     {
-        if (order[i] == ActiveSetIndex)
+        if (order[i] == objectIndex)
         {
             return i;
         }
     }
 
     return 0;
+}
+
+
+// Возвращает позиции слоёв, с которыми нужно поменять объект
+vector<size_t> GetLayerTargets(
+    size_t position,
+    size_t layerCount,
+    LayerCommand command
+)
+{
+    vector<size_t> targets;
+
+    switch (command)
+    {
+    case LAYER_FORWARD:
+        if (position + 1 < layerCount)
+        {
+            targets.push_back(position + 1);
+        }
+        break;
+
+    case LAYER_BACKWARD:
+        if (position > 0)
+        {
+            targets.push_back(position - 1);
+        }
+        break;
+
+    case LAYER_TO_FRONT:
+        for (size_t i = position + 1; i < layerCount; i++)
+        {
+            targets.push_back(i);
+        }
+        break;
+
+    case LAYER_TO_BACK:
+        for (size_t i = position; i > 0; i--)
+        {
+            targets.push_back(i - 1);
+        }
+        break;
+    }
+
+    return targets;
+}
+
+
+// Возвращает положение активного набора среди слоёв
+size_t GetActiveLayerPosition()
+{
+    return FindLayerPosition(GetSetDrawOrder(), ActiveSetIndex);
 }
 
 
@@ -344,8 +399,8 @@ GLint GetHighestZOrder()
 }
 
 
-// Поднимает активный набор на один слой
-void MoveCurrentSetForward()
+// Изменяет положение активного набора среди слоёв
+void ChangeSetLayer(LayerCommand command)
 {
     if (CurrentMode != DRAW_MODE)
     {
@@ -354,64 +409,18 @@ void MoveCurrentSetForward()
 
     vector<size_t> order = GetSetDrawOrder();
     size_t position = GetActiveLayerPosition();
+    vector<size_t> targets = GetLayerTargets(
+        position,
+        order.size(),
+        command
+    );
 
-    if (position + 1 < order.size())
+    for (size_t i = 0; i < targets.size(); i++)
     {
-        swap(Sets[ActiveSetIndex].zOrder, Sets[order[position + 1]].zOrder);
-    }
-}
-
-
-// Опускает активный набор на один слой
-void MoveCurrentSetBackward()
-{
-    if (CurrentMode != DRAW_MODE)
-    {
-        return;
-    }
-
-    vector<size_t> order = GetSetDrawOrder();
-    size_t position = GetActiveLayerPosition();
-
-    if (position > 0)
-    {
-        swap(Sets[ActiveSetIndex].zOrder, Sets[order[position - 1]].zOrder);
-    }
-}
-
-
-// Поднимает активный набор поверх остальных
-void BringCurrentSetToFront()
-{
-    if (CurrentMode != DRAW_MODE)
-    {
-        return;
-    }
-
-    vector<size_t> order = GetSetDrawOrder();
-    size_t position = GetActiveLayerPosition();
-
-    for (size_t i = position; i + 1 < order.size(); i++)
-    {
-        swap(Sets[ActiveSetIndex].zOrder, Sets[order[i + 1]].zOrder);
-    }
-}
-
-
-// Опускает активный набор под остальные
-void SendCurrentSetToBack()
-{
-    if (CurrentMode != DRAW_MODE)
-    {
-        return;
-    }
-
-    vector<size_t> order = GetSetDrawOrder();
-    size_t position = GetActiveLayerPosition();
-
-    for (size_t i = position; i > 0; i--)
-    {
-        swap(Sets[ActiveSetIndex].zOrder, Sets[order[i - 1]].zOrder);
+        swap(
+            Sets[ActiveSetIndex].zOrder,
+            Sets[order[targets[i]]].zOrder
+        );
     }
 }
 
@@ -447,17 +456,10 @@ vector<size_t> GetPrimitiveDrawOrder(const PrimitiveSet& set)
 size_t GetActivePrimitiveLayerPosition()
 {
     PrimitiveSet& currentSet = GetCurrentSet();
-    vector<size_t> order = GetPrimitiveDrawOrder(currentSet);
-
-    for (size_t i = 0; i < order.size(); i++)
-    {
-        if (order[i] == ActivePrimitiveIndex)
-        {
-            return i;
-        }
-    }
-
-    return 0;
+    return FindLayerPosition(
+        GetPrimitiveDrawOrder(currentSet),
+        ActivePrimitiveIndex
+    );
 }
 
 
@@ -478,8 +480,8 @@ GLint GetHighestPrimitiveZOrder(const PrimitiveSet& set)
 }
 
 
-// Поднимает выбранный примитив на один уровень
-void MoveActivePrimitiveForward()
+// Изменяет положение выбранного примитива внутри набора
+void ChangePrimitiveLayer(LayerCommand command)
 {
     if (CurrentMode != EDIT_MODE)
     {
@@ -496,156 +498,32 @@ void MoveActivePrimitiveForward()
     PrimitiveSet& currentSet = GetCurrentSet();
     vector<size_t> order = GetPrimitiveDrawOrder(currentSet);
     size_t position = GetActivePrimitiveLayerPosition();
+    vector<size_t> targets = GetLayerTargets(
+        position,
+        order.size(),
+        command
+    );
 
-    if (position + 1 < order.size())
+    for (size_t i = 0; i < targets.size(); i++)
     {
         swap(
             currentSet.primitives[ActivePrimitiveIndex].zOrder,
-            currentSet.primitives[order[position + 1]].zOrder
+            currentSet.primitives[order[targets[i]]].zOrder
         );
     }
 }
 
 
-// Опускает выбранный примитив на один уровень
-void MoveActivePrimitiveBackward()
-{
-    if (CurrentMode != EDIT_MODE)
-    {
-        return;
-    }
-
-    EnsureActivePrimitive();
-
-    if (!HasActivePrimitive)
-    {
-        return;
-    }
-
-    PrimitiveSet& currentSet = GetCurrentSet();
-    vector<size_t> order = GetPrimitiveDrawOrder(currentSet);
-    size_t position = GetActivePrimitiveLayerPosition();
-
-    if (position > 0)
-    {
-        swap(
-            currentSet.primitives[ActivePrimitiveIndex].zOrder,
-            currentSet.primitives[order[position - 1]].zOrder
-        );
-    }
-}
-
-
-// Поднимает выбранный примитив поверх набора
-void BringActivePrimitiveToFront()
-{
-    if (CurrentMode != EDIT_MODE)
-    {
-        return;
-    }
-
-    EnsureActivePrimitive();
-
-    if (!HasActivePrimitive)
-    {
-        return;
-    }
-
-    PrimitiveSet& currentSet = GetCurrentSet();
-    vector<size_t> order = GetPrimitiveDrawOrder(currentSet);
-    size_t position = GetActivePrimitiveLayerPosition();
-
-    for (size_t i = position; i + 1 < order.size(); i++)
-    {
-        swap(
-            currentSet.primitives[ActivePrimitiveIndex].zOrder,
-            currentSet.primitives[order[i + 1]].zOrder
-        );
-    }
-}
-
-
-// Опускает выбранный примитив под набор
-void SendActivePrimitiveToBack()
-{
-    if (CurrentMode != EDIT_MODE)
-    {
-        return;
-    }
-
-    EnsureActivePrimitive();
-
-    if (!HasActivePrimitive)
-    {
-        return;
-    }
-
-    PrimitiveSet& currentSet = GetCurrentSet();
-    vector<size_t> order = GetPrimitiveDrawOrder(currentSet);
-    size_t position = GetActivePrimitiveLayerPosition();
-
-    for (size_t i = position; i > 0; i--)
-    {
-        swap(
-            currentSet.primitives[ActivePrimitiveIndex].zOrder,
-            currentSet.primitives[order[i - 1]].zOrder
-        );
-    }
-}
-
-
-// Поднимает текущий объект на один уровень
-void MoveCurrentLayerForward()
+// Изменяет слой набора или примитива в зависимости от режима
+void ChangeCurrentLayer(LayerCommand command)
 {
     if (CurrentMode == EDIT_MODE)
     {
-        MoveActivePrimitiveForward();
+        ChangePrimitiveLayer(command);
     }
     else
     {
-        MoveCurrentSetForward();
-    }
-}
-
-
-// Опускает текущий объект на один уровень
-void MoveCurrentLayerBackward()
-{
-    if (CurrentMode == EDIT_MODE)
-    {
-        MoveActivePrimitiveBackward();
-    }
-    else
-    {
-        MoveCurrentSetBackward();
-    }
-}
-
-
-// Поднимает текущий объект поверх остальных
-void BringCurrentLayerToFront()
-{
-    if (CurrentMode == EDIT_MODE)
-    {
-        BringActivePrimitiveToFront();
-    }
-    else
-    {
-        BringCurrentSetToFront();
-    }
-}
-
-
-// Опускает текущий объект под остальные
-void SendCurrentLayerToBack()
-{
-    if (CurrentMode == EDIT_MODE)
-    {
-        SendActivePrimitiveToBack();
-    }
-    else
-    {
-        SendCurrentSetToBack();
+        ChangeSetLayer(command);
     }
 }
 
@@ -698,6 +576,14 @@ void UpdateWindowTitle()
     }
 
     glutSetWindowTitle(title.c_str());
+}
+
+
+// Обновляет заголовок и запрашивает перерисовку окна
+void RefreshWindow()
+{
+    UpdateWindowTitle();
+    glutPostRedisplay();
 }
 
 
@@ -801,6 +687,42 @@ void LimitMovement(const Bounds& bounds, GLint& dx, GLint& dy)
 }
 
 
+// Задаёт цвет одного примитива
+void SetPrimitiveColor(
+    Primitive& primitive,
+    GLubyte r,
+    GLubyte g,
+    GLubyte b
+)
+{
+    primitive.colorR = r;
+    primitive.colorG = g;
+    primitive.colorB = b;
+}
+
+
+// Смещает все вершины одного примитива
+void MovePrimitive(Primitive& primitive, GLint dx, GLint dy)
+{
+    for (size_t i = 0; i < primitive.vertices.size(); i++)
+    {
+        primitive.vertices[i].x += dx;
+        primitive.vertices[i].y += dy;
+    }
+}
+
+
+// Возвращает один примитив в исходное положение
+void ResetPrimitivePosition(Primitive& primitive)
+{
+    for (size_t i = 0; i < primitive.vertices.size(); i++)
+    {
+        primitive.vertices[i].x = primitive.vertices[i].initialX;
+        primitive.vertices[i].y = primitive.vertices[i].initialY;
+    }
+}
+
+
 // Добавляет вершину в текущий примитив
 void AddVertex(GLint x, GLint y)
 {
@@ -870,7 +792,7 @@ void StartNewSet()
     Sets.push_back(newSet);
     ActiveSetIndex = Sets.size() - 1;
     CurrentMode = DRAW_MODE;
-    ClearActivePrimitive();
+    ResetPrimitiveSelection();
 }
 
 
@@ -891,9 +813,7 @@ void SetCurrentColor(GLubyte r, GLubyte g, GLubyte b)
         }
 
         Primitive& primitive = currentSet.primitives[ActivePrimitiveIndex];
-        primitive.colorR = r;
-        primitive.colorG = g;
-        primitive.colorB = b;
+        SetPrimitiveColor(primitive, r, g, b);
         return;
     }
 
@@ -903,9 +823,7 @@ void SetCurrentColor(GLubyte r, GLubyte g, GLubyte b)
 
     for (size_t i = 0; i < currentSet.primitives.size(); i++)
     {
-        currentSet.primitives[i].colorR = r;
-        currentSet.primitives[i].colorG = g;
-        currentSet.primitives[i].colorB = b;
+        SetPrimitiveColor(currentSet.primitives[i], r, g, b);
     }
 }
 
@@ -924,12 +842,7 @@ void MoveCurrentSet(GLint dx, GLint dy)
     {
         Primitive& primitive = currentSet.primitives[i];
 
-        // Обходит вершины примитива
-        for (size_t j = 0; j < primitive.vertices.size(); j++)
-        {
-            primitive.vertices[j].x += dx;
-            primitive.vertices[j].y += dy;
-        }
+        MovePrimitive(primitive, dx, dy);
     }
 }
 
@@ -948,11 +861,7 @@ void MoveActivePrimitive(GLint dx, GLint dy)
     Bounds bounds = GetPrimitiveBounds(primitive);
     LimitMovement(bounds, dx, dy);
 
-    for (size_t i = 0; i < primitive.vertices.size(); i++)
-    {
-        primitive.vertices[i].x += dx;
-        primitive.vertices[i].y += dy;
-    }
+    MovePrimitive(primitive, dx, dy);
 }
 
 
@@ -979,11 +888,7 @@ void ResetCurrentSetPosition()
     {
         Primitive& primitive = currentSet.primitives[i];
 
-        for (size_t j = 0; j < primitive.vertices.size(); j++)
-        {
-            primitive.vertices[j].x = primitive.vertices[j].initialX;
-            primitive.vertices[j].y = primitive.vertices[j].initialY;
-        }
+        ResetPrimitivePosition(primitive);
     }
 }
 
@@ -999,12 +904,7 @@ void ResetActivePrimitivePosition()
     }
 
     Primitive& primitive = GetCurrentSet().primitives[ActivePrimitiveIndex];
-
-    for (size_t i = 0; i < primitive.vertices.size(); i++)
-    {
-        primitive.vertices[i].x = primitive.vertices[i].initialX;
-        primitive.vertices[i].y = primitive.vertices[i].initialY;
-    }
+    ResetPrimitivePosition(primitive);
 }
 
 
@@ -1094,13 +994,7 @@ void DeleteLastSet()
 
     // Оставляет пустой активный набор
     EnsureCurrentSet();
-
-    ClearActivePrimitive();
-
-    if (CurrentMode == EDIT_MODE)
-    {
-        EnsureActivePrimitive();
-    }
+    ResetPrimitiveSelection();
 }
 
 
@@ -1110,51 +1004,32 @@ void DeleteActiveSet()
     EnsureCurrentSet();
     Sets.erase(Sets.begin() + ActiveSetIndex);
     EnsureCurrentSet();
-
-    ClearActivePrimitive();
-
-    if (CurrentMode == EDIT_MODE)
-    {
-        EnsureActivePrimitive();
-    }
+    ResetPrimitiveSelection();
 }
 
 
-// Выбираем предыдущий набор
-void SelectPreviousSet()
+// Выбирает соседний набор
+void SelectSet(SelectDirection direction)
 {
     EnsureCurrentSet();
 
-    if (ActiveSetIndex == 0)
+    if (direction == PREVIOUS)
     {
-        ActiveSetIndex = Sets.size() - 1;
+        if (ActiveSetIndex == 0)
+        {
+            ActiveSetIndex = Sets.size() - 1;
+        }
+        else
+        {
+            ActiveSetIndex--;
+        }
     }
     else
     {
-        ActiveSetIndex--;
+        ActiveSetIndex = (ActiveSetIndex + 1) % Sets.size();
     }
 
-    ClearActivePrimitive();
-
-    if (CurrentMode == EDIT_MODE)
-    {
-        EnsureActivePrimitive();
-    }
-}
-
-
-// Выбирает следующий набор
-void SelectNextSet()
-{
-    EnsureCurrentSet();
-    ActiveSetIndex = (ActiveSetIndex + 1) % Sets.size();
-
-    ClearActivePrimitive();
-
-    if (CurrentMode == EDIT_MODE)
-    {
-        EnsureActivePrimitive();
-    }
+    ResetPrimitiveSelection();
 }
 
 
@@ -1344,11 +1219,11 @@ void Keyboard(unsigned char key, int x, int y)
     case '\t':
         if (glutGetModifiers() & GLUT_ACTIVE_SHIFT)
         {
-            SelectPreviousPrimitive();
+            SelectPrimitive(PREVIOUS);
         }
         else
         {
-            SelectNextPrimitive();
+            SelectPrimitive(NEXT);
         }
         break;
 
@@ -1369,10 +1244,7 @@ void Keyboard(unsigned char key, int x, int y)
         break;
     }
 
-	UpdateWindowTitle();
-
-	// Запрашивает перерисовку окна через встроенный функционал GLUT
-    glutPostRedisplay();
+    RefreshWindow();
 }
 
 
@@ -1386,7 +1258,7 @@ void SpecialKeyboard(int key, int x, int y)
     case GLUT_KEY_UP:
         if (changeLayer)
         {
-            MoveCurrentLayerForward();
+            ChangeCurrentLayer(LAYER_FORWARD);
         }
         else
         {
@@ -1397,7 +1269,7 @@ void SpecialKeyboard(int key, int x, int y)
     case GLUT_KEY_DOWN:
         if (changeLayer)
         {
-            MoveCurrentLayerBackward();
+            ChangeCurrentLayer(LAYER_BACKWARD);
         }
         else
         {
@@ -1420,7 +1292,7 @@ void SpecialKeyboard(int key, int x, int y)
     case GLUT_KEY_HOME:
         if (changeLayer)
         {
-            BringCurrentLayerToFront();
+            ChangeCurrentLayer(LAYER_TO_FRONT);
         }
         else
         {
@@ -1431,29 +1303,29 @@ void SpecialKeyboard(int key, int x, int y)
     case GLUT_KEY_END:
         if (changeLayer)
         {
-            SendCurrentLayerToBack();
+            ChangeCurrentLayer(LAYER_TO_BACK);
         }
         break;
 
     case GLUT_KEY_PAGE_UP:
         if (CurrentMode == EDIT_MODE)
         {
-            SelectPreviousPrimitive();
+            SelectPrimitive(PREVIOUS);
         }
         else
         {
-            SelectPreviousSet();
+            SelectSet(PREVIOUS);
         }
         break;
 
     case GLUT_KEY_PAGE_DOWN:
         if (CurrentMode == EDIT_MODE)
         {
-            SelectNextPrimitive();
+            SelectPrimitive(NEXT);
         }
         else
         {
-            SelectNextSet();
+            SelectSet(NEXT);
         }
         break;
 
@@ -1462,10 +1334,7 @@ void SpecialKeyboard(int key, int x, int y)
         break;
     }
 
-    UpdateWindowTitle();
-
-    // Запрашивает перерисовку окна через встроенный функционал GLUT
-    glutPostRedisplay();
+    RefreshWindow();
 }
 
 
@@ -1483,10 +1352,7 @@ void Mouse(int button, int state, int x, int y)
     {
         AddVertex(x, Height - y);
 
-        UpdateWindowTitle();
-
-        // Запрашивает перерисовку окна
-        glutPostRedisplay();
+        RefreshWindow();
     }
 }
 
@@ -1525,27 +1391,27 @@ void Menu(int command)
         break;
 
     case MENU_PREVIOUS_SET:
-        SelectPreviousSet();
+        SelectSet(PREVIOUS);
         break;
 
     case MENU_NEXT_SET:
-        SelectNextSet();
+        SelectSet(NEXT);
         break;
 
     case MENU_LAYER_FORWARD:
-        MoveCurrentLayerForward();
+        ChangeCurrentLayer(LAYER_FORWARD);
         break;
 
     case MENU_LAYER_BACKWARD:
-        MoveCurrentLayerBackward();
+        ChangeCurrentLayer(LAYER_BACKWARD);
         break;
 
     case MENU_LAYER_FRONT:
-        BringCurrentLayerToFront();
+        ChangeCurrentLayer(LAYER_TO_FRONT);
         break;
 
     case MENU_LAYER_BACK:
-        SendCurrentLayerToBack();
+        ChangeCurrentLayer(LAYER_TO_BACK);
         break;
 
     case MENU_TOGGLE_MODE:
@@ -1553,11 +1419,11 @@ void Menu(int command)
         break;
 
     case MENU_PREVIOUS_PRIMITIVE:
-        SelectPreviousPrimitive();
+        SelectPrimitive(PREVIOUS);
         break;
 
     case MENU_NEXT_PRIMITIVE:
-        SelectNextPrimitive();
+        SelectPrimitive(NEXT);
         break;
 
     case MENU_RESET_POSITION:
@@ -1581,10 +1447,7 @@ void Menu(int command)
         break;
     }
 
-    UpdateWindowTitle();
-
-    // Запрашивает перерисовку окна
-    glutPostRedisplay();
+    RefreshWindow();
 }
 
 
